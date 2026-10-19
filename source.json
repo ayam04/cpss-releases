@@ -1,5 +1,5 @@
 {
-  "sha": "b477373819d0a40ac2fe6d3d96a07fe6f5f0ba0a",
-  "subject": "One CPSS app: home screen, always-on backend, classroom mode",
-  "run": "39332774392"
+  "sha": "8afd8778aca9a33d1e70bbf04c726561e74d1d59",
+  "subject": "Say DB string, not MongoDB, everywhere in both apps",
+  "run": "39334113890"
 }
