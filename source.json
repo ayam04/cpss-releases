@@ -1,5 +1,5 @@
 {
-  "sha": "2f224319c1b972fc7bdb348bb43cce118878bbfe",
-  "subject": "Auto update, MongoDB-only storage and protected PDF exports",
-  "run": "39323840859"
+  "sha": "0d327983cf9b188076258fe9ac11d26990ae9df6",
+  "subject": "Stage 2 DATABASE screen: plain message when the saved database is not reachable",
+  "run": "39325597620"
 }
