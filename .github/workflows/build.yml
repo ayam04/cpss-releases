@@ -130,18 +130,12 @@ jobs:
           if (-not (Test-Path $exe)) { throw "The Stage 2 export did not produce $exe." }
           Write-Host "Exported $exe ($([Math]::Round((Get-Item $exe).Length / 1MB, 1)) MB)"
 
-      - name: Build CPSS-Stage1-Setup.exe
+      - name: Build CPSS-Setup.exe
         shell: powershell
         run: |
           $node = (Get-Command node -CommandType Application | Select-Object -First 1).Source
-          powershell -NoProfile -ExecutionPolicy Bypass -File src\desktop\build-stage1.ps1 -Version '${{ steps.source.outputs.version }}' -NodePath $node
-          if ($LASTEXITCODE -ne 0) { throw "build-stage1.ps1 failed." }
-
-      - name: Build CPSS-Stage2-Setup.exe
-        shell: powershell
-        run: |
-          powershell -NoProfile -ExecutionPolicy Bypass -File src\desktop\build-stage2.ps1 -Version '${{ steps.source.outputs.version }}' -GodotVersion $env:GODOT_VERSION
-          if ($LASTEXITCODE -ne 0) { throw "build-stage2.ps1 failed." }
+          powershell -NoProfile -ExecutionPolicy Bypass -File src\desktop\build-cpss.ps1 -Version '${{ steps.source.outputs.version }}' -NodePath $node -GodotVersion $env:GODOT_VERSION
+          if ($LASTEXITCODE -ne 0) { throw "build-cpss.ps1 failed." }
 
       - name: Write latest.json
         shell: powershell
@@ -160,8 +154,7 @@ jobs:
           $version = '${{ steps.source.outputs.version }}'
           $out = Join-Path $PWD 'src/desktop/out'
           gh release create "v$version" `
-            (Join-Path $out 'CPSS-Stage1-Setup.exe') `
-            (Join-Path $out 'CPSS-Stage2-Setup.exe') `
+            (Join-Path $out 'CPSS-Setup.exe') `
             (Join-Path $out 'latest.json') `
             --repo "${{ github.repository }}" `
             --title "CPSS $version" `
