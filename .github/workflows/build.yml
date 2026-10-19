@@ -1,0 +1,170 @@
+name: Build
+
+on:
+  push:
+    branches: [main]
+    paths: [source.json]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: build
+  cancel-in-progress: false
+
+env:
+  GODOT_VERSION: 4.7.2
+
+jobs:
+  build:
+    name: Build and publish the CPSS installers
+    runs-on: windows-latest
+    timeout-minutes: 60
+    steps:
+      - name: Read source.json
+        uses: actions/checkout@v4
+        with:
+          path: releases
+
+      - name: Work out the version
+        id: source
+        shell: pwsh
+        run: |
+          $source = Get-Content releases/source.json -Raw | ConvertFrom-Json
+          if ($source.sha -notmatch '^[0-9a-f]{40}$') { throw "source.json has no commit id." }
+          $version = "1.$env:GITHUB_RUN_NUMBER.0"
+          "sha=$($source.sha)" >> $env:GITHUB_OUTPUT
+          "version=$version" >> $env:GITHUB_OUTPUT
+          $notes = "$($source.subject)`n`nSource commit $($source.sha.Substring(0, 7))."
+          [IO.File]::WriteAllText((Join-Path $env:RUNNER_TEMP 'notes.txt'), $notes)
+          [IO.File]::WriteAllText((Join-Path $env:RUNNER_TEMP 'subject.txt'), [string]$source.subject)
+          Write-Host "Building CPSS $version from $($source.sha)"
+
+      - name: Check out the private source
+        uses: actions/checkout@v4
+        with:
+          repository: ayam04/cpss
+          ref: ${{ steps.source.outputs.sha }}
+          ssh-key: ${{ secrets.CPSS_SOURCE_KEY }}
+          path: src
+
+      - name: Set up Node.js 24
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: src/cpss_stage1/package-lock.json
+
+      - name: Install the Stage 1 packages
+        working-directory: src/cpss_stage1
+        run: npm ci --no-audit --no-fund
+
+      - name: Restore Godot and its Windows export templates
+        id: godot-cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/godot
+            ~/AppData/Roaming/Godot/export_templates/${{ env.GODOT_VERSION }}.stable
+          key: godot-${{ env.GODOT_VERSION }}-windows-v1
+
+      - name: Download Godot and its Windows export templates
+        if: steps.godot-cache.outputs.cache-hit != 'true'
+        shell: pwsh
+        run: |
+          $ProgressPreference = 'SilentlyContinue'
+          $base = "https://github.com/godotengine/godot/releases/download/$env:GODOT_VERSION-stable"
+          $godot = Join-Path $HOME 'godot'
+          New-Item -ItemType Directory -Force $godot | Out-Null
+          $editorZip = Join-Path $env:RUNNER_TEMP 'godot.zip'
+          Invoke-WebRequest "$base/Godot_v$env:GODOT_VERSION-stable_win64.exe.zip" -OutFile $editorZip
+          Expand-Archive $editorZip -DestinationPath $godot -Force
+          $templatesZip = Join-Path $env:RUNNER_TEMP 'templates.tpz'
+          Invoke-WebRequest "$base/Godot_v$env:GODOT_VERSION-stable_export_templates.tpz" -OutFile $templatesZip
+          $target = Join-Path $env:APPDATA "Godot\export_templates\$env:GODOT_VERSION.stable"
+          New-Item -ItemType Directory -Force $target | Out-Null
+          Add-Type -AssemblyName System.IO.Compression.FileSystem
+          $zip = [IO.Compression.ZipFile]::OpenRead($templatesZip)
+          try {
+            foreach ($entry in $zip.Entries) {
+              if ($entry.FullName -match '^templates/(windows_[^/]+|version\.txt)$') {
+                [IO.Compression.ZipFileExtensions]::ExtractToFile($entry, (Join-Path $target $entry.Name), $true)
+              }
+            }
+          } finally {
+            $zip.Dispose()
+          }
+          Get-ChildItem $target | ForEach-Object { Write-Host "$($_.Name) $([Math]::Round($_.Length / 1MB, 1)) MB" }
+
+      - name: Stamp the version into the Stage 2 project
+        shell: pwsh
+        run: |
+          $version = '${{ steps.source.outputs.version }}'
+          $numeric = "$version.0"
+          $project = Join-Path $PWD 'src/cpss_practice/project.godot'
+          $text = [IO.File]::ReadAllText($project)
+          if ($text -match '(?m)^config/version=') {
+            $text = [regex]::Replace($text, '(?m)^config/version=.*$', "config/version=`"$version`"")
+          } else {
+            $text = [regex]::Replace($text, '(?m)^(config/name=.*)$', "`$1`nconfig/version=`"$version`"")
+          }
+          [IO.File]::WriteAllText($project, $text)
+          $presets = Join-Path $PWD 'src/cpss_practice/export_presets.cfg'
+          $text = [IO.File]::ReadAllText($presets)
+          $text = [regex]::Replace($text, '(?m)^application/file_version=.*$', "application/file_version=`"$numeric`"")
+          $text = [regex]::Replace($text, '(?m)^application/product_version=.*$', "application/product_version=`"$numeric`"")
+          [IO.File]::WriteAllText($presets, $text)
+          Select-String -Path $project -Pattern '^config/version='
+          Select-String -Path $presets -Pattern '^application/(file|product)_version='
+
+      - name: Export Stage 2
+        shell: pwsh
+        run: |
+          $godot = Join-Path $HOME "godot\Godot_v$env:GODOT_VERSION-stable_win64_console.exe"
+          $project = Join-Path $PWD 'src/cpss_practice'
+          New-Item -ItemType Directory -Force (Join-Path $project 'build') | Out-Null
+          & $godot --headless --path $project --import
+          & $godot --headless --path $project --export-release "Windows Desktop" build/CPSS-Stage2.exe
+          $exe = Join-Path $project 'build/CPSS-Stage2.exe'
+          if (-not (Test-Path $exe)) { throw "The Stage 2 export did not produce $exe." }
+          Write-Host "Exported $exe ($([Math]::Round((Get-Item $exe).Length / 1MB, 1)) MB)"
+
+      - name: Build CPSS-Stage1-Setup.exe
+        shell: powershell
+        run: |
+          $node = (Get-Command node -CommandType Application | Select-Object -First 1).Source
+          powershell -NoProfile -ExecutionPolicy Bypass -File src\desktop\build-stage1.ps1 -Version '${{ steps.source.outputs.version }}' -NodePath $node
+          if ($LASTEXITCODE -ne 0) { throw "build-stage1.ps1 failed." }
+
+      - name: Build CPSS-Stage2-Setup.exe
+        shell: powershell
+        run: |
+          powershell -NoProfile -ExecutionPolicy Bypass -File src\desktop\build-stage2.ps1 -Version '${{ steps.source.outputs.version }}' -GodotVersion $env:GODOT_VERSION
+          if ($LASTEXITCODE -ne 0) { throw "build-stage2.ps1 failed." }
+
+      - name: Write latest.json
+        shell: powershell
+        run: |
+          $version = '${{ steps.source.outputs.version }}'
+          $subject = [IO.File]::ReadAllText((Join-Path $env:RUNNER_TEMP 'subject.txt'))
+          powershell -NoProfile -ExecutionPolicy Bypass -File src\desktop\make-feed.ps1 -Version $version -BaseUrl "https://github.com/${{ github.repository }}/releases/download/v$version" -Notes $subject
+          if ($LASTEXITCODE -ne 0) { throw "make-feed.ps1 failed." }
+          Get-Content src\desktop\out\latest.json
+
+      - name: Publish the release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $version = '${{ steps.source.outputs.version }}'
+          $out = Join-Path $PWD 'src/desktop/out'
+          gh release create "v$version" `
+            (Join-Path $out 'CPSS-Stage1-Setup.exe') `
+            (Join-Path $out 'CPSS-Stage2-Setup.exe') `
+            (Join-Path $out 'latest.json') `
+            --repo "${{ github.repository }}" `
+            --title "CPSS $version" `
+            --notes-file (Join-Path $env:RUNNER_TEMP 'notes.txt') `
+            --latest
+          if ($LASTEXITCODE -ne 0) { throw "gh release create failed." }
