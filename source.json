@@ -1,5 +1,5 @@
 {
-  "sha": "8afd8778aca9a33d1e70bbf04c726561e74d1d59",
-  "subject": "Say DB string, not MongoDB, everywhere in both apps",
-  "run": "39334113890"
+  "sha": "1e8d666d2f12e568f34ba40c6b8194f5e7c5fc88",
+  "subject": "Show the CPSS version at the top left of the home screen",
+  "run": "39334965269"
 }
