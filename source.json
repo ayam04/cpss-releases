@@ -1,5 +1,5 @@
 {
-  "sha": "bb9a05359f277f6cc64145efaf5ceefd3c2ac176",
-  "subject": "Harder numerical paper, new mirror test, game 9 snake path, new game 4",
-  "run": "39511274917"
+  "sha": "611fd3b249d637f13d2698ea03490684fbc603c2",
+  "subject": "Fix launcher crashes, sequence startup, stop the backend on every exit",
+  "run": "39527057409"
 }
